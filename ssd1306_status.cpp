@@ -173,15 +173,11 @@ static double mem_pct() {
 // ── display formatting ─────────────────────────────────────────────
 
 /*
- * Layout (all ASCII except SSID, 16 cols each):
+ * Pad each line to 15 cols max + explicit \n.
  *
- *   WiFi:MySSID       ← "WiFi:" (5) + SSID (up to 11 cols)
- *   Eth:up            ← wired
- *   NET:DOWN          ← no link
- *
- *   CPU: 3% MEM:17%   ← max 15 cols
- *   webdav     OK     ← "webdav" (6) + pad + "OK"/"DOWN"
- *   mp3fetch   OK     ← "mp3fetch" (8) + pad + "OK"/"DOWN"
+ * NEVER pad to 16 — the driver's auto-wrap at column 16 triggers a
+ * bug in advance_line (update_8x16_cell with col=16, out-of-bounds)
+ * that corrupts the previous row's framebuffer, eating characters.
  */
 static std::string build_screen(const NetInfo &net,
                                  double cpu, double mem,
@@ -190,7 +186,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 11);   // 5 + ≤11 = 16
+        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 10);   // 5 + ≤10 = 15
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
@@ -199,24 +195,22 @@ static std::string build_screen(const NetInfo &net,
         l1 = "NET:DOWN";
         break;
     }
-    l1 = u8_pad(l1, COLS);
+    l1 = u8_pad(l1, 15) + "\n";
 
-    // line 2 – cpu / mem  (max: "C:100% M:100%"=14 cols)
+    // line 2 – cpu / mem
     char b2[32];
-    snprintf(b2, sizeof(b2), "C:%2.0f%% M:%2.0f%%", cpu, mem);
-    std::string l2 = u8_pad(b2, COLS);
+    snprintf(b2, sizeof(b2), "C:%2.0f%%M:%2.0f%%", cpu, mem);
+    std::string l2 = u8_pad(b2, 15) + "\n";
 
     // line 3 – webdav
-    std::string l3 = "webdav  ";
+    std::string l3 = "webdav ";
     l3 += webdav ? " OK" : "DOWN";
-    l3 = u8_pad(l3, COLS);
+    l3 = u8_pad(l3, 15) + "\n";
 
-    // line 4 – mp3fetcher (NO pad — pad would trigger auto-wrap → scroll → blank)
-    std::string l4 = "mp3fetch ";
+    // line 4 – mp3fetcher (no trailing \n)
+    std::string l4 = "mp3fetch";
     l4 += mp3 ? " OK" : "DOWN";
-    l4 = u8_pad(l4, COLS - 1);   // pad to 15, so col never hits 16
 
-    // No explicit newlines — driver auto-wraps at column 16.
     return l1 + l2 + l3 + l4;
 }
 
