@@ -3,12 +3,14 @@
  * ssd1306_status.cpp  —  SSD1306 OLED system status daemon
  *
  * Displays on 128x64 SSD1306 OLED (4 rows x 16 cols):
- *   Line 1: network type + WiFi SSID (UTF-8)
+ *   Line 1: network type + WiFi SSID
  *   Line 2: CPU % + memory %
  *   Line 3: WebDAV service
  *   Line 4: MP3 fetcher service
  *
- * Writes UTF-8 text to /dev/ssd1306; clears via SSD1306IOC_CLEAR ioctl.
+ * Incremental refresh: only rewrites lines that actually changed.
+ * Uses ANSI arrow-key escapes (ESC [ A / B / C / D) to navigate
+ * within the terminal, and \r to return to column 0.
  *
  * Build: g++ -std=c++20 -O2 -Wall -Wextra -o ssd1306_status ssd1306_status.cpp
  */
@@ -23,19 +25,32 @@
 #include <cstring>
 #include <string>
 
-// ── ioctl ─────────────────────────────────────────────────────────
-static constexpr unsigned long SSD1306_IOC_CLEAR = 0x5301;  // _IO('S', 0x01)
-
-static constexpr int COLS   = 16;
-static constexpr int REFRESH_S = 3;
+static constexpr unsigned long SSD1306_IOC_CLEAR = 0x5301;  // _IO('S',0x01)
+static constexpr int  ROWS       = 4;
+static constexpr int  COLS       = 16;
+static constexpr int  REFRESH_S  = 3;
 static constexpr const char *DEV = "/dev/ssd1306";
 
-// ── tiny helpers ──────────────────────────────────────────────────
+// ── ANSI cursor movement ──────────────────────────────────────────
+// "\x1b" = ESC, then '[' + letter: A=up B=down C=right D=left
+static const char *UP(int n) {
+    static char buf[32];
+    int pos = 0;
+    for (int i = 0; i < n; i++) { buf[pos++]='\x1b'; buf[pos++]='['; buf[pos++]='A'; }
+    buf[pos] = '\0';
+    return buf;
+}
+static const char *DN(int n) {
+    static char buf[32];
+    int pos = 0;
+    for (int i = 0; i < n; i++) { buf[pos++]='\x1b'; buf[pos++]='['; buf[pos++]='B'; }
+    buf[pos] = '\0';
+    return buf;
+}
 
-// truncate UTF-8 s to ≤ max_cols display columns (never splits a char)
+// ── UTF-8 truncation (SSID may be CJK, 2 columns wide) ────────────
 static std::string dsp_trunc(const std::string &s, int max_cols) {
-    int w = 0;
-    size_t i = 0;
+    int w = 0; size_t i = 0;
     while (i < s.size() && w < max_cols) {
         auto c = static_cast<unsigned char>(s[i]);
         int bl, cw;
@@ -50,8 +65,7 @@ static std::string dsp_trunc(const std::string &s, int max_cols) {
     return s.substr(0, i);
 }
 
-// ── helpers ────────────────────────────────────────────────────────
-
+// ── sysfs / command helpers ───────────────────────────────────────
 static std::string read_sysfs(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return "";
@@ -62,54 +76,39 @@ static std::string read_sysfs(const char *path) {
     while (n && (buf[n-1] == '\n' || buf[n-1] == '\r')) --n;
     return std::string(buf, n);
 }
-
 static std::string run_cmd(const char *cmd) {
     FILE *p = popen(cmd, "r");
     if (!p) return "";
-    char buf[256];
-    std::string r;
+    char buf[256]; std::string r;
     if (fgets(buf, sizeof(buf), p)) {
         r = buf;
-        while (!r.empty() && (r.back() == '\n' || r.back() == '\r'))
-            r.pop_back();
+        while (!r.empty() && (r.back()=='\n' || r.back()=='\r')) r.pop_back();
     }
     pclose(p);
     return r;
 }
-
 static bool svc_active(const char *name) {
     char cmd[128];
-    snprintf(cmd, sizeof(cmd),
-             "systemctl is-active --quiet %s 2>/dev/null", name);
+    snprintf(cmd, sizeof(cmd), "systemctl is-active --quiet %s 2>/dev/null", name);
     return system(cmd) == 0;
 }
 
 // ── data gatherers ─────────────────────────────────────────────────
-
 struct NetInfo { enum { WIFI, WIRED, DOWN } type; std::string ssid; };
-
 static NetInfo get_net() {
-    // wlan0 first
     if (read_sysfs("/sys/class/net/wlan0/operstate") == "up" &&
         read_sysfs("/sys/class/net/wlan0/carrier")   == "1") {
         auto ssid = run_cmd("iwgetid wlan0 -r 2>/dev/null");
         if (ssid.empty()) ssid = "?";
         return {NetInfo::WIFI, ssid};
     }
-    // eth0
     if (read_sysfs("/sys/class/net/eth0/operstate") == "up" &&
-        read_sysfs("/sys/class/net/eth0/carrier")   == "1") {
+        read_sysfs("/sys/class/net/eth0/carrier")   == "1")
         return {NetInfo::WIRED, {}};
-    }
     return {NetInfo::DOWN, {}};
 }
 
-struct CpuSnap {
-    unsigned long long usr, nice, sys, idle, iow, irq, sirq;
-    auto total() const { return usr + nice + sys + idle + iow + irq + sirq; }
-    auto idle2() const { return idle + iow; }
-};
-
+struct CpuSnap { unsigned long long usr, nice, sys, idle, iow, irq, sirq; };
 static CpuSnap cpu_snap() {
     CpuSnap s{};
     FILE *f = fopen("/proc/stat", "r");
@@ -121,13 +120,12 @@ static CpuSnap cpu_snap() {
     }
     return s;
 }
-
 static double cpu_pct(const CpuSnap &a, const CpuSnap &b) {
-    auto dd = b.idle2() - a.idle2();
-    auto dt = b.total() - a.total();
+    auto dd = b.idle + b.iow - a.idle - a.iow;
+    auto dt = (b.usr+b.nice+b.sys+b.idle+b.iow+b.irq+b.sirq)
+            - (a.usr+a.nice+a.sys+a.idle+a.iow+a.irq+a.sirq);
     return dt ? (1.0 - (double)dd / (double)dt) * 100.0 : 0.0;
 }
-
 static double mem_pct() {
     FILE *f = fopen("/proc/meminfo", "r");
     if (!f) return 0.0;
@@ -136,65 +134,48 @@ static double mem_pct() {
     while (fgets(line, sizeof(line), f)) {
         unsigned long long v;
         if      (sscanf(line, "MemTotal:     %llu", &v) == 1) total = v;
-        else if (sscanf(line, "MemAvailable: %llu", &v) == 1) { avail = v; break; }
+        else if (sscanf(line, "MemAvailable: %llu", &v) == 1) { avail=v; break; }
     }
     fclose(f);
     return (double)(total - avail) / (double)total * 100.0;
 }
 
-// ── display formatting ─────────────────────────────────────────────
-
-/*
- * No padding at all — just write content + \n for each line.
- * Padding to 16 triggers driver auto-wrap, then \n does another
- * line advance → double-spacing.  \n alone positions to next row
- * correctly without any auto-wrap side-effects.
- */
-static std::string build_screen(const NetInfo &net,
-                                 double cpu, double mem,
-                                 bool webdav, bool mp3) {
-    // line 1 – network
-    std::string l1;
+// ── build 4 display lines ─────────────────────────────────────────
+static void build_lines(std::string l[4],
+                        const NetInfo &net, double cpu, double mem,
+                        bool webdav, bool mp3) {
+    // line 0 – network
     switch (net.type) {
     case NetInfo::WIFI:
-        // "WiFi:" = 5 cols,  SSID max 11 cols → total ≤ 16
-        l1 = "WiFi:" + dsp_trunc(net.ssid, 11);
-        break;
+        l[0] = "WiFi:" + dsp_trunc(net.ssid, 11); break;
     case NetInfo::WIRED:
-        l1 = "Eth:up";
-        break;
+        l[0] = "Eth:up"; break;
     default:
-        l1 = "NET:DOWN";
-        break;
+        l[0] = "NET:DOWN"; break;
     }
 
-    // line 2 – cpu / mem  (≥100% → "F", else "NN%")
-    char b2[32];
+    // line 1 – cpu / mem  (≥100% → "F")
     auto fmt = [](double v) -> std::string {
         if (v >= 100.0) return "F";
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%2.0f%%", v);
-        return buf;
+        char b[8]; snprintf(b, sizeof(b), "%2.0f%%", v); return b;
     };
-    snprintf(b2, sizeof(b2), "CPU %s MEM %s", fmt(cpu).c_str(), fmt(mem).c_str());
+    char b1[32];
+    snprintf(b1, sizeof(b1), "CPU %s MEM %s", fmt(cpu).c_str(), fmt(mem).c_str());
+    l[1] = b1;
 
-    // line 3 – webdav
-    std::string l3 = "webdav  ";
-    l3 += webdav ? " OK" : "DOWN";
+    // line 2 – webdav
+    l[2] = "webdav  ";
+    l[2] += webdav ? " OK" : "DOWN";
 
-    // line 4 – mp3fetcher
-    std::string l4 = "mp3fetch ";
-    l4 += mp3 ? " OK" : "DOWN";
-
-    return l1 + "\n" + b2 + "\n" + l3 + "\n" + l4;
+    // line 3 – mp3fetcher
+    l[3] = "mp3fetch ";
+    l[3] += mp3 ? " OK" : "DOWN";
 }
 
 // ── main ───────────────────────────────────────────────────────────
-
 int main() {
     printf("ssd1306_status: starting\n");
-
-    sleep(8);   // let network + services settle after boot
+    sleep(8);
 
     int fd = open(DEV, O_WRONLY);
     if (fd < 0) {
@@ -202,34 +183,68 @@ int main() {
         return 1;
     }
 
-    auto prev = cpu_snap();
+    auto prev_cpu = cpu_snap();
+    std::string old[ROWS];          // previous frame contents
+    std::string cur[ROWS];          // new frame contents
+    bool     first = true;
+    int      cursor_row = 0;        // where we think the hw cursor is
 
     for (;;) {
         NetInfo net = get_net();
-        double mem  = mem_pct();
-        bool wd     = svc_active("webdav-server.service");
-        bool mp3    = svc_active("mp3fetcher.service");
+        double  mem = mem_pct();
+        bool    wd  = svc_active("webdav-server.service");
+        bool    mp3 = svc_active("mp3fetcher.service");
 
-        auto cur = cpu_snap();
-        double c  = cpu_pct(prev, cur);
-        prev = cur;
+        auto cpu_now = cpu_snap();
+        double cp = cpu_pct(prev_cpu, cpu_now);
+        prev_cpu = cpu_now;
 
-        ioctl(fd, SSD1306_IOC_CLEAR);
-        auto out = build_screen(net, c, mem, wd, mp3);
+        build_lines(cur, net, cp, mem, wd, mp3);
 
-        if (write(fd, out.data(), out.size()) < 0) {
-            fprintf(stderr, "ssd1306_status: write: %s\n", strerror(errno));
-            close(fd);
-            sleep(5);
-            fd = open(DEV, O_WRONLY);
-            if (fd < 0) {
-                fprintf(stderr, "ssd1306_status: waiting for %s...\n", DEV);
-                sleep(10);
-                continue;
+        if (first) {
+            // full paint
+            ioctl(fd, SSD1306_IOC_CLEAR);
+            std::string all =
+                cur[0] + "\n" + cur[1] + "\n" + cur[2] + "\n" + cur[3];
+            if (write(fd, all.data(), all.size()) < 0) goto reopen;
+            for (int i = 0; i < ROWS; i++) old[i] = cur[i];
+            cursor_row = 3;
+            first = false;
+        } else {
+            for (int r = 0; r < ROWS; r++) {
+                if (cur[r] != old[r]) {
+                    int d = r - cursor_row;
+                    std::string nav;
+                    if (d < 0)      nav  = UP(-d);
+                    else if (d > 0) nav  = DN(d);
+                    nav += '\r';
+                    std::string line = cur[r];
+                    int old_len = (int)old[r].size();
+                    int new_len = (int)line.size();
+                    if (new_len < old_len) line.append(old_len - new_len, ' ');
+
+                    if (write(fd, nav.data(),  nav.size())  < 0) goto reopen;
+                    if (write(fd, line.data(), line.size()) < 0) goto reopen;
+                    cursor_row = r;
+                    old[r] = cur[r];
+                }
             }
-            prev = cpu_snap();
         }
 
         sleep(REFRESH_S);
+        continue;
+
+    reopen:
+        fprintf(stderr, "ssd1306_status: write error: %s\n", strerror(errno));
+        close(fd);
+        sleep(5);
+        fd = open(DEV, O_WRONLY);
+        if (fd < 0) {
+            fprintf(stderr, "ssd1306_status: waiting for %s...\n", DEV);
+            sleep(10);
+            continue;
+        }
+        prev_cpu = cpu_snap();
+        first = true;   // force full repaint after reopen
     }
 }
