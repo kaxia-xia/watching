@@ -30,16 +30,6 @@ static constexpr int COLS   = 16;
 static constexpr int REFRESH_S = 3;
 static constexpr const char *DEV = "/dev/ssd1306";
 
-// ── tiny helpers ──────────────────────────────────────────────────
-
-// strip non-ASCII bytes, keep only printable ASCII
-static std::string ascii_only(const std::string &s) {
-    std::string r;
-    for (unsigned char c : s)
-        if (c >= 0x20 && c <= 0x7E) r += (char)c;
-    return r;
-}
-
 // ── helpers ────────────────────────────────────────────────────────
 
 static std::string read_sysfs(const char *path) {
@@ -147,7 +137,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + ascii_only(net.ssid);
+        l1 = "WiFi:" + net.ssid;
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
