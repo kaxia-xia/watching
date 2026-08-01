@@ -1,0 +1,18 @@
+[Unit]
+Description=SSD1306 OLED System Status Display
+After=network.target network-online.target multi-user.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/kaxia/code/watching/ssd1306_status.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ssd1306-status
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
