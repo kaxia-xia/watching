@@ -211,12 +211,13 @@ static std::string build_screen(const NetInfo &net,
     l3 += webdav ? " OK" : "DOWN";
     l3 = u8_pad(l3, COLS);
 
-    // line 4 – mp3fetcher
+    // line 4 – mp3fetcher (NO pad — pad would trigger auto-wrap → scroll → blank)
     std::string l4 = "mp3fetch ";
     l4 += mp3 ? " OK" : "DOWN";
-    l4 = u8_pad(l4, COLS);
+    l4 = u8_pad(l4, COLS - 1);   // pad to 15, so col never hits 16
 
-    return l1 + "\n" + l2 + "\n" + l3 + "\n" + l4;
+    // No explicit newlines — driver auto-wraps at column 16.
+    return l1 + l2 + l3 + l4;
 }
 
 // ── main ───────────────────────────────────────────────────────────
