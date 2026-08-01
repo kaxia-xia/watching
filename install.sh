@@ -1,6 +1,6 @@
 #!/bin/bash
-# 安装 ssd1306-status systemd 服务
-# 用法:  sudo bash install.sh
+# Install ssd1306-status systemd service
+# Usage:  sudo bash install.sh
 
 set -e
 
@@ -9,37 +9,37 @@ BIN="$DIR/ssd1306_status"
 SRC="$DIR/ssd1306_status.cpp"
 SVC="$DIR/ssd1306-status.service"
 
-echo "=== SSD1306 系统状态显示 - 安装脚本 ==="
+echo "=== SSD1306 Status Display - Installer ==="
 
-# 1. 编译 (如果需要)
+# 1. Build (if needed)
 if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
-    echo "[*] 编译 $SRC ..."
+    echo "[*] Building $SRC ..."
     g++ -std=c++20 -O2 -Wall -Wextra -o "$BIN" "$SRC"
-    echo "[OK] 编译完成 → $BIN"
+    echo "[OK] Build done → $BIN"
 else
-    echo "[OK] 二进制已是最新"
+    echo "[OK] Binary is up-to-date"
 fi
 
-# 2. 安装 systemd 服务
+# 2. Install systemd unit
 cp "$SVC" /etc/systemd/system/ssd1306-status.service
-echo "[OK] 服务文件已复制 → /etc/systemd/system/ssd1306-status.service"
+echo "[OK] Unit file → /etc/systemd/system/ssd1306-status.service"
 
 systemctl daemon-reload
-echo "[OK] systemd 配置已重载"
+echo "[OK] systemd reloaded"
 
 systemctl enable ssd1306-status.service
-echo "[OK] 已设为开机自启"
+echo "[OK] Enabled for auto-start"
 
 systemctl restart ssd1306-status.service
-echo "[OK] 服务已启动"
+echo "[OK] Service started"
 
 echo ""
-echo "=== 状态 ==="
+echo "=== Status ==="
 systemctl status ssd1306-status.service --no-pager 2>&1 || true
 
 echo ""
-echo "=== 常用命令 ==="
-echo "  systemctl status ssd1306-status   查看状态"
-echo "  systemctl restart ssd1306-status  重启服务"
-echo "  systemctl stop ssd1306-status     停止服务"
-echo "  journalctl -u ssd1306-status -f   查看日志"
+echo "=== Commands ==="
+echo "  systemctl status   ssd1306-status"
+echo "  systemctl restart  ssd1306-status"
+echo "  systemctl stop     ssd1306-status"
+echo "  journalctl -u ssd1306-status -f"
