@@ -147,9 +147,12 @@ static std::string build_screen(const NetInfo &net,
         break;
     }
 
-    // line 2 – cpu / mem  (max: "CPU 100% MEM 100%" = 18 cols, minor overflow ok)
+    // line 2 – cpu / mem  (truncate to 16 to prevent auto-wrap)
     char b2[32];
     snprintf(b2, sizeof(b2), "CPU %2.0f%% MEM %2.0f%%", cpu, mem);
+    std::string l2(b2);
+    if (l2.size() > 16) l2.resize(16);
+    l2 += "\n";
 
     // line 3 – webdav
     std::string l3 = "webdav  ";
@@ -159,7 +162,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l4 = "mp3fetch ";
     l4 += mp3 ? " OK" : "DOWN";
 
-    return l1 + "\n" + b2 + "\n" + l3 + "\n" + l4;
+    return l1 + "\n" + l2 + l3 + "\n" + l4;
 }
 
 // ── main ───────────────────────────────────────────────────────────
