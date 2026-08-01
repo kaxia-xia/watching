@@ -30,51 +30,13 @@ static constexpr int COLS   = 16;
 static constexpr int REFRESH_S = 3;
 static constexpr const char *DEV = "/dev/ssd1306";
 
-// ── tiny UTF-8 helpers (only needed for SSID truncation / pad) ────
-
-static int u8_blen(const char *s) {
-    auto c = static_cast<unsigned char>(*s);
-    if (c <= 0x7F)     return 1;
-    if ((c & 0xE0) == 0xC0) return 2;
-    if ((c & 0xF0) == 0xE0) return 3;
-    if ((c & 0xF8) == 0xF0) return 4;
-    return 1;
-}
-
-static int u8_width(const std::string &s) {
-    int w = 0;
-    for (size_t i = 0; i < s.size(); ) {
-        int bl = u8_blen(&s[i]);
-        w += (bl == 1 && static_cast<unsigned char>(s[i]) <= 0x7F) ? 1 : 2;
-        i += bl;
-    }
-    return w;
-}
-
-// truncate to ≤ max display columns, never splitting a multi-byte char
-static std::string u8_trunc(const std::string &s, int max_cols) {
-    int w = 0;
-    size_t i = 0;
-    while (i < s.size() && w < max_cols) {
-        int bl = u8_blen(&s[i]);
-        int cw = (bl == 1 && static_cast<unsigned char>(s[i]) <= 0x7F) ? 1 : 2;
-        if (w + cw > max_cols) break;
-        w += cw;  i += bl;
-    }
-    return s.substr(0, i);
-}
+// ── tiny helpers ──────────────────────────────────────────────────
 
 // strip non-ASCII bytes, keep only printable ASCII
 static std::string ascii_only(const std::string &s) {
     std::string r;
     for (unsigned char c : s)
         if (c >= 0x20 && c <= 0x7E) r += (char)c;
-    return r;
-}
-
-static std::string u8_pad(const std::string &s, int cols) {
-    std::string r = s;
-    for (int w = u8_width(r); w < cols; ++w) r += ' ';
     return r;
 }
 
@@ -173,8 +135,10 @@ static double mem_pct() {
 // ── display formatting ─────────────────────────────────────────────
 
 /*
- * Each line padded to 16 cols + explicit \n.
- * Driver auto-wrap fixed — hitting col 16 no longer corrupts framebuffer.
+ * No padding at all — just write content + \n for each line.
+ * Padding to 16 triggers driver auto-wrap, then \n does another
+ * line advance → double-spacing.  \n alone positions to next row
+ * correctly without any auto-wrap side-effects.
  */
 static std::string build_screen(const NetInfo &net,
                                  double cpu, double mem,
@@ -183,7 +147,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 11);   // 5 + ≤11 = 16
+        l1 = "WiFi:" + ascii_only(net.ssid);
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
@@ -192,24 +156,20 @@ static std::string build_screen(const NetInfo &net,
         l1 = "NET:DOWN";
         break;
     }
-    l1 = u8_pad(l1, COLS);
 
-    // line 2 – cpu / mem  (max: "C:100% M:100%" = 14 cols → fits in 16)
+    // line 2 – cpu / mem
     char b2[32];
     snprintf(b2, sizeof(b2), "C:%2.0f%% M:%2.0f%%", cpu, mem);
-    std::string l2 = u8_pad(b2, COLS);
 
     // line 3 – webdav
     std::string l3 = "webdav  ";
     l3 += webdav ? " OK" : "DOWN";
-    l3 = u8_pad(l3, COLS);
 
     // line 4 – mp3fetcher
     std::string l4 = "mp3fetch ";
     l4 += mp3 ? " OK" : "DOWN";
-    l4 = u8_pad(l4, COLS);
 
-    return l1 + "\n" + l2 + "\n" + l3 + "\n" + l4;
+    return l1 + "\n" + b2 + "\n" + l3 + "\n" + l4;
 }
 
 // ── main ───────────────────────────────────────────────────────────
