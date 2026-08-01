@@ -64,6 +64,14 @@ static std::string u8_trunc(const std::string &s, int max_cols) {
     return s.substr(0, i);
 }
 
+// strip non-ASCII bytes, keep only printable ASCII
+static std::string ascii_only(const std::string &s) {
+    std::string r;
+    for (unsigned char c : s)
+        if (c >= 0x20 && c <= 0x7E) r += (char)c;
+    return r;
+}
+
 static std::string u8_pad(const std::string &s, int cols) {
     std::string r = s;
     for (int w = u8_width(r); w < cols; ++w) r += ' ';
@@ -182,7 +190,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + u8_trunc(net.ssid, 11);   // 5 + ≤11 = 16
+        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 11);   // 5 + ≤11 = 16
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
