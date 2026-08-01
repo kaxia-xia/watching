@@ -173,11 +173,8 @@ static double mem_pct() {
 // ── display formatting ─────────────────────────────────────────────
 
 /*
- * Pad each line to 15 cols max + explicit \n.
- *
- * NEVER pad to 16 — the driver's auto-wrap at column 16 triggers a
- * bug in advance_line (update_8x16_cell with col=16, out-of-bounds)
- * that corrupts the previous row's framebuffer, eating characters.
+ * Each line padded to 16 cols + explicit \n.
+ * Driver auto-wrap fixed — hitting col 16 no longer corrupts framebuffer.
  */
 static std::string build_screen(const NetInfo &net,
                                  double cpu, double mem,
@@ -186,7 +183,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 10);   // 5 + ≤10 = 15
+        l1 = "WiFi:" + u8_trunc(ascii_only(net.ssid), 11);   // 5 + ≤11 = 16
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
@@ -195,23 +192,24 @@ static std::string build_screen(const NetInfo &net,
         l1 = "NET:DOWN";
         break;
     }
-    l1 = u8_pad(l1, 15) + "\n";
+    l1 = u8_pad(l1, COLS);
 
-    // line 2 – cpu / mem
+    // line 2 – cpu / mem  (max: "C:100% M:100%" = 14 cols → fits in 16)
     char b2[32];
-    snprintf(b2, sizeof(b2), "C:%2.0f%%M:%2.0f%%", cpu, mem);
-    std::string l2 = u8_pad(b2, 15) + "\n";
+    snprintf(b2, sizeof(b2), "C:%2.0f%% M:%2.0f%%", cpu, mem);
+    std::string l2 = u8_pad(b2, COLS);
 
     // line 3 – webdav
-    std::string l3 = "webdav ";
+    std::string l3 = "webdav  ";
     l3 += webdav ? " OK" : "DOWN";
-    l3 = u8_pad(l3, 15) + "\n";
+    l3 = u8_pad(l3, COLS);
 
-    // line 4 – mp3fetcher (no trailing \n)
-    std::string l4 = "mp3fetch";
+    // line 4 – mp3fetcher
+    std::string l4 = "mp3fetch ";
     l4 += mp3 ? " OK" : "DOWN";
+    l4 = u8_pad(l4, COLS);
 
-    return l1 + l2 + l3 + l4;
+    return l1 + "\n" + l2 + "\n" + l3 + "\n" + l4;
 }
 
 // ── main ───────────────────────────────────────────────────────────
