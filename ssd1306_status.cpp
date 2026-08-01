@@ -147,9 +147,9 @@ static std::string build_screen(const NetInfo &net,
         break;
     }
 
-    // line 2 – cpu / mem  (max: "CPU100% MEM 100%" = 17 cols, minor overflow ok)
+    // line 2 – cpu / mem  (max: "CPU 100% MEM 100%" = 18 cols, minor overflow ok)
     char b2[32];
-    snprintf(b2, sizeof(b2), "CPU%2.0f%% MEM %2.0f%%", cpu, mem);
+    snprintf(b2, sizeof(b2), "CPU %2.0f%% MEM %2.0f%%", cpu, mem);
 
     // line 3 – webdav
     std::string l3 = "webdav  ";
