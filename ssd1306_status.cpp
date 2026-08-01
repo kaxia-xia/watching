@@ -147,12 +147,15 @@ static std::string build_screen(const NetInfo &net,
         break;
     }
 
-    // line 2 – cpu / mem  (truncate to 16 to prevent auto-wrap)
+    // line 2 – cpu / mem  (≥100% → "F", else "NN%")
     char b2[32];
-    snprintf(b2, sizeof(b2), "CPU %2.0f%% MEM %2.0f%%", cpu, mem);
-    std::string l2(b2);
-    if (l2.size() > 16) l2.resize(16);
-    l2 += "\n";
+    auto fmt = [](double v) -> std::string {
+        if (v >= 100.0) return "F";
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%2.0f%%", v);
+        return buf;
+    };
+    snprintf(b2, sizeof(b2), "CPU %s MEM %s", fmt(cpu).c_str(), fmt(mem).c_str());
 
     // line 3 – webdav
     std::string l3 = "webdav  ";
@@ -162,7 +165,7 @@ static std::string build_screen(const NetInfo &net,
     std::string l4 = "mp3fetch ";
     l4 += mp3 ? " OK" : "DOWN";
 
-    return l1 + "\n" + l2 + l3 + "\n" + l4;
+    return l1 + "\n" + b2 + "\n" + l3 + "\n" + l4;
 }
 
 // ── main ───────────────────────────────────────────────────────────
