@@ -1,11 +1,11 @@
 [Unit]
-Description=SSD1306 OLED System Status Display
+Description=SSD1306 OLED 系统状态显示
 After=network.target network-online.target multi-user.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/kaxia/code/watching/ssd1306_status.py
+ExecStart=/home/kaxia/code/watching/ssd1306_status
 Restart=always
 RestartSec=10
 StandardOutput=journal

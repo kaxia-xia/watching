@@ -1,42 +1,45 @@
 #!/bin/bash
-# Install ssd1306-status as a systemd service
-# Run this with:  sudo bash install.sh
+# 安装 ssd1306-status systemd 服务
+# 用法:  sudo bash install.sh
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICE_FILE="$SCRIPT_DIR/ssd1306-status.service"
-PYTHON_SCRIPT="$SCRIPT_DIR/ssd1306_status.py"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN="$DIR/ssd1306_status"
+SRC="$DIR/ssd1306_status.cpp"
+SVC="$DIR/ssd1306-status.service"
 
-echo "=== SSD1306 Status Display Installer ==="
+echo "=== SSD1306 系统状态显示 - 安装脚本 ==="
 
-# 1. Make Python script executable
-chmod +x "$PYTHON_SCRIPT"
-echo "[OK] $PYTHON_SCRIPT is executable"
+# 1. 编译 (如果需要)
+if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
+    echo "[*] 编译 $SRC ..."
+    g++ -std=c++20 -O2 -Wall -Wextra -o "$BIN" "$SRC"
+    echo "[OK] 编译完成 → $BIN"
+else
+    echo "[OK] 二进制已是最新"
+fi
 
-# 2. Copy service file
-cp "$SERVICE_FILE" /etc/systemd/system/ssd1306-status.service
-echo "[OK] Service file copied to /etc/systemd/system/"
+# 2. 安装 systemd 服务
+cp "$SVC" /etc/systemd/system/ssd1306-status.service
+echo "[OK] 服务文件已复制 → /etc/systemd/system/ssd1306-status.service"
 
-# 3. Reload systemd
 systemctl daemon-reload
-echo "[OK] systemd daemon reloaded"
+echo "[OK] systemd 配置已重载"
 
-# 4. Enable and start
 systemctl enable ssd1306-status.service
-echo "[OK] Service enabled (auto-start on boot)"
+echo "[OK] 已设为开机自启"
 
-systemctl start ssd1306-status.service
-echo "[OK] Service started"
-
-# 5. Show status
-echo ""
-echo "=== Service Status ==="
-systemctl status ssd1306-status.service --no-pager || true
+systemctl restart ssd1306-status.service
+echo "[OK] 服务已启动"
 
 echo ""
-echo "=== Useful Commands ==="
-echo "  systemctl status ssd1306-status   # Check status"
-echo "  systemctl restart ssd1306-status  # Restart"
-echo "  systemctl stop ssd1306-status     # Stop"
-echo "  journalctl -u ssd1306-status -f   # Follow logs"
+echo "=== 状态 ==="
+systemctl status ssd1306-status.service --no-pager 2>&1 || true
+
+echo ""
+echo "=== 常用命令 ==="
+echo "  systemctl status ssd1306-status   查看状态"
+echo "  systemctl restart ssd1306-status  重启服务"
+echo "  systemctl stop ssd1306-status     停止服务"
+echo "  journalctl -u ssd1306-status -f   查看日志"
