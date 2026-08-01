@@ -30,6 +30,26 @@ static constexpr int COLS   = 16;
 static constexpr int REFRESH_S = 3;
 static constexpr const char *DEV = "/dev/ssd1306";
 
+// ── tiny helpers ──────────────────────────────────────────────────
+
+// truncate UTF-8 s to ≤ max_cols display columns (never splits a char)
+static std::string dsp_trunc(const std::string &s, int max_cols) {
+    int w = 0;
+    size_t i = 0;
+    while (i < s.size() && w < max_cols) {
+        auto c = static_cast<unsigned char>(s[i]);
+        int bl, cw;
+        if      (c <= 0x7F)           { bl = 1; cw = 1; }
+        else if ((c & 0xE0) == 0xC0) { bl = 2; cw = 2; }
+        else if ((c & 0xF0) == 0xE0) { bl = 3; cw = 2; }
+        else if ((c & 0xF8) == 0xF0) { bl = 4; cw = 2; }
+        else                         { bl = 1; cw = 1; }
+        if (w + cw > max_cols) break;
+        w += cw; i += bl;
+    }
+    return s.substr(0, i);
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 
 static std::string read_sysfs(const char *path) {
@@ -137,7 +157,8 @@ static std::string build_screen(const NetInfo &net,
     std::string l1;
     switch (net.type) {
     case NetInfo::WIFI:
-        l1 = "WiFi:" + net.ssid;
+        // "WiFi:" = 5 cols,  SSID max 11 cols → total ≤ 16
+        l1 = "WiFi:" + dsp_trunc(net.ssid, 11);
         break;
     case NetInfo::WIRED:
         l1 = "Eth:up";
