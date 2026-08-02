@@ -397,26 +397,20 @@ int main() {
     } // end for(;;) main loop
 
     // ── graceful shutdown: clear screen & show message ───────
-    // Write each of 4 rows exactly 16 columns via ANSI positioning.
-    // Do NOT use \n — the driver may scroll when writing to the
-    // last visible row, pushing our message up and off screen.
-    // "    正在关机…  " = 4 spaces + 4 CJK(8 cols) + …(2 cols) + 2 spaces = 16 cols
+    // Use the same proven pattern as the full-paint path:
+    //   ioctl CLEAR (resets cursor to 0,0) then write 4 \n-separated
+    //   lines each ≤16 cols.  close() is safe since Restart=on-failure
+    //   and exit 0 means systemd won't restart and blank the display.
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
-    {
-        // Go to row 0, col 0
-        std::string nav = UP(3);
-        nav += '\r';
-        // Line 0
-        nav += "    正在关机…  ";   // 16 cols, no \n
-        // Line 1: move down, \r, 16 spaces
-        nav += DN(1); nav += '\r'; nav += "                ";
-        // Line 2
-        nav += DN(1); nav += '\r'; nav += "                ";
-        // Line 3
-        nav += DN(1); nav += '\r'; nav += "                ";
-        (void)!write(fd, nav.data(), nav.size());
-    }
+    ioctl(fd, SSD1306_IOC_CLEAR);
+    //         "    正在关机…  "  = 4 spaces + 正在(4) + 关机(4) + …(2) + 2 spaces = 16 cols
+    const char *shutdown_msg =
+        "    正在关机…  \n"
+        "                \n"
+        "                \n"
+        "                ";
+    (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
     close(fd);
     if (nl_fd >= 0) close(nl_fd);
     return 0;
