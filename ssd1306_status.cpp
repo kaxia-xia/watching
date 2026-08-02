@@ -397,18 +397,22 @@ int main() {
     } // end for(;;) main loop
 
     // ── graceful shutdown: clear screen & show message ───────
-    // Each line must be exactly 16 columns so no residual
-    // content from the previous frame bleeds through.
-    // "    正在关机…  " = 4 spaces + 4 CJK chars(8 cols) + …(2 cols) + 2 spaces = 16 cols
+    // Rewrite all 4 rows without ioctl CLEAR (which may interact
+    // badly with close()).  First move cursor to row 0, col 0.
+    // "    正在关机…  " = 4 spaces + 4 CJK(8 cols) + …(2 cols) + 2 spaces = 16 cols
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
-    ioctl(fd, SSD1306_IOC_CLEAR);
     const char *shutdown_msg =
         "    正在关机…  \n"
         "                \n"
         "                \n"
         "                ";
-    (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
+    // Navigate to home: up 3 rows then carriage-return
+    // (we're normally on row 3, going up 3 brings us to row 0)
+    std::string nav = UP(3);
+    nav += '\r';
+    nav += shutdown_msg;
+    (void)!write(fd, nav.data(), nav.size());
     // Let the message stay visible briefly before close
     usleep(500000);
     close(fd);
