@@ -397,25 +397,29 @@ int main() {
     } // end for(;;) main loop
 
     // ── graceful shutdown: clear screen & show message ───────
-    // Rewrite all 4 rows without ioctl CLEAR (which may interact
-    // badly with close()).  First move cursor to row 0, col 0.
+    // Write each of 4 rows exactly 16 columns via ANSI positioning.
+    // Do NOT use \n — the driver may scroll when writing to the
+    // last visible row, pushing our message up and off screen.
     // "    正在关机…  " = 4 spaces + 4 CJK(8 cols) + …(2 cols) + 2 spaces = 16 cols
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
-    const char *shutdown_msg =
-        "    正在关机…  \n"
-        "                \n"
-        "                \n"
-        "                ";
-    // Navigate to home: up 3 rows then carriage-return
-    // (we're normally on row 3, going up 3 brings us to row 0)
-    std::string nav = UP(3);
-    nav += '\r';
-    nav += shutdown_msg;
-    (void)!write(fd, nav.data(), nav.size());
-    // Let the message stay visible briefly before close
-    usleep(500000);
+    {
+        // Go to row 0, col 0
+        std::string nav = UP(3);
+        nav += '\r';
+        // Line 0
+        nav += "    正在关机…  ";   // 16 cols, no \n
+        // Line 1: move down, \r, 16 spaces
+        nav += DN(1); nav += '\r'; nav += "                ";
+        // Line 2
+        nav += DN(1); nav += '\r'; nav += "                ";
+        // Line 3
+        nav += DN(1); nav += '\r'; nav += "                ";
+        (void)!write(fd, nav.data(), nav.size());
+    }
     close(fd);
+    if (nl_fd >= 0) close(nl_fd);
+    return 0;
 
     if (nl_fd >= 0) close(nl_fd);
     return 0;
