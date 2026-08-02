@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 // Signal-safe shutdown flag
@@ -220,22 +221,25 @@ static int netlink_open() {
     return fd;
 }
 
-// Drain all pending netlink messages.  Returns true if at least one
-// message was read (meaning a network event happened).
-static bool netlink_drain(int nl_fd) {
+// Drain all pending netlink messages.  No return value — we
+// will compare network state before/after instead of trusting
+// the raw message count.
+static void netlink_drain(int nl_fd) {
     char buf[4096];
-    bool got_event = false;
     for (;;) {
         ssize_t n = recv(nl_fd, buf, sizeof(buf), 0);
-        if (n > 0) {
-            got_event = true;
-            continue;               // drain the whole queue
-        }
+        if (n > 0) continue;               // drain the whole queue
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
         if (n == 0) break;
         break;                      // real error → bail
     }
-    return got_event;
+}
+
+// Compare two NetInfo structs for equality (only fields we display)
+static bool netinfo_equal(const NetInfo &a, const NetInfo &b) {
+    if (a.type != b.type) return false;
+    if (a.type == NetInfo::WIFI && a.ssid != b.ssid) return false;
+    return true;
 }
 
 // ── main ───────────────────────────────────────────────────────────
@@ -249,6 +253,7 @@ int main() {
     sigaction(SIGINT,  &sa, nullptr);
 
     printf("ssd1306_status: starting\n");
+    fflush(stdout);
     sleep(8);
 
     int fd = open(DEV, O_WRONLY);
@@ -260,16 +265,25 @@ int main() {
     // Try to open netlink for network-change notifications.
     // If it fails we fall back to pure polling — still works fine.
     int nl_fd = netlink_open();
-    if (nl_fd >= 0)
+    if (nl_fd >= 0) {
         printf("ssd1306_status: netlink listener active\n");
-    else
+        fflush(stdout);
+    } else {
         printf("ssd1306_status: netlink unavailable, polling only\n");
+        fflush(stdout);
+    }
 
     auto prev_cpu = cpu_snap();
+    NetInfo prev_net = get_net();   // track network state for change detection
     std::string old[ROWS];          // previous frame contents
     std::string cur[ROWS];          // new frame contents
     bool     first = true;
     int      cursor_row = 0;        // where we think the hw cursor is
+
+    // Cooldown for full-screen repaints triggered by network change.
+    // Avoids repeated full repaints when netlink floods us with events.
+    time_t   last_full_paint = 0;
+    static constexpr time_t FULL_PAINT_COOLDOWN = 10;  // seconds
 
     struct pollfd pfds[2];
     int nfds = 0;
@@ -278,6 +292,7 @@ int main() {
     if (nl_fd >= 0) {
         pfds[nfds].fd     = nl_fd;
         pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
         nfds++;
     }
     // timer-only fallback: poll with no fds but a timeout
@@ -285,6 +300,10 @@ int main() {
 
     for (;;) {
         // ── poll: wait for netlink event or timeout ────────────
+        // Always clear revents before poll to avoid stale values
+        // (especially after EINTR, revents may be undefined).
+        if (nl_fd >= 0) pfds[0].revents = 0;
+
         int ret = poll(pfds, nfds, REFRESH_S * 1000);
         if (ret < 0) {
             if (errno == EINTR) {
@@ -298,16 +317,9 @@ int main() {
         // Check shutdown flag (may have been set during poll)
         if (g_shutdown) break;
 
-        // Check if netlink has data → network state changed
-        bool net_changed = false;
+        // Drain netlink if there's data — we'll compare state below
         if (nl_fd >= 0 && (pfds[0].revents & POLLIN)) {
-            net_changed = netlink_drain(nl_fd);
-        }
-
-        // If network changed, force a full-screen repaint
-        if (net_changed) {
-            first = true;
-            printf("ssd1306_status: network change detected, refresh\n");
+            netlink_drain(nl_fd);
         }
 
         // ── gather data ────────────────────────────────────────
@@ -319,6 +331,22 @@ int main() {
         auto cpu_now = cpu_snap();
         double cp = cpu_pct(prev_cpu, cpu_now);
         prev_cpu = cpu_now;
+
+        // Detect if network state actually changed (not just netlink noise)
+        bool net_state_changed = !netinfo_equal(net, prev_net);
+        if (net_state_changed) {
+            prev_net = net;
+            time_t now = time(nullptr);
+            // Only force full repaint outside the cooldown window.
+            // During cooldown the incremental refresh will still pick
+            // up the changed network line on the next timer tick.
+            if (now - last_full_paint >= FULL_PAINT_COOLDOWN) {
+                first = true;
+                last_full_paint = now;
+                printf("ssd1306_status: network state changed, full refresh\n");
+                fflush(stdout);
+            }
+        }
 
         build_lines(cur, net, cp, mem, wd, temp);
 
@@ -370,6 +398,7 @@ int main() {
 
     // ── graceful shutdown: clear screen & show message ───────
     printf("ssd1306_status: shutting down...\n");
+    fflush(stdout);
     ioctl(fd, SSD1306_IOC_CLEAR);
     const char *shutdown_msg = "    正在关机…\n\n\n";
     (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
