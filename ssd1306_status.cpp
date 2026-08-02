@@ -399,16 +399,18 @@ int main() {
     // ── graceful shutdown: clear screen & show message ───────
     // Each line must be exactly 16 columns so no residual
     // content from the previous frame bleeds through.
-    // "    正在关机…" = 4 spaces + 4 CJK(8 cols) + …(1 col) = 13 cols, pad 3 spaces.
+    // "    正在关机…  " = 4 spaces + 4 CJK chars(8 cols) + …(2 cols) + 2 spaces = 16 cols
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
     ioctl(fd, SSD1306_IOC_CLEAR);
     const char *shutdown_msg =
-        "    正在关机…   \n"
+        "    正在关机…  \n"
         "                \n"
         "                \n"
         "                ";
     (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
+    // Let the message stay visible briefly before close
+    usleep(500000);
     close(fd);
 
     if (nl_fd >= 0) close(nl_fd);
