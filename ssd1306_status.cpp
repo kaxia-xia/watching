@@ -29,10 +29,15 @@
 #include <linux/rtnetlink.h>
 
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+
+// Signal-safe shutdown flag
+static volatile sig_atomic_t g_shutdown = 0;
+static void on_sigterm(int) { g_shutdown = 1; }
 
 static constexpr unsigned long SSD1306_IOC_CLEAR = 0x5301;  // _IO('S',0x01)
 static constexpr int  ROWS       = 4;
@@ -229,6 +234,14 @@ static bool netlink_drain(int nl_fd) {
 
 // ── main ───────────────────────────────────────────────────────────
 int main() {
+    // ── register signal handlers for graceful shutdown ────────
+    struct sigaction sa{};
+    sa.sa_handler = on_sigterm;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;            // no SA_RESTART: poll() returns EINTR immediately
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT,  &sa, nullptr);
+
     printf("ssd1306_status: starting\n");
     sleep(8);
 
@@ -268,10 +281,16 @@ int main() {
         // ── poll: wait for netlink event or timeout ────────────
         int ret = poll(pfds, nfds, REFRESH_S * 1000);
         if (ret < 0) {
-            if (errno == EINTR) continue;  // signal, just loop
+            if (errno == EINTR) {
+                if (g_shutdown) break;   // SIGTERM received → shutdown
+                continue;
+            }
             perror("ssd1306_status: poll");
             sleep(REFRESH_S);
         }
+
+        // Check shutdown flag (may have been set during poll)
+        if (g_shutdown) break;
 
         // Check if netlink has data → network state changed
         bool net_changed = false;
@@ -341,9 +360,15 @@ int main() {
         }
         prev_cpu = cpu_snap();
         first = true;   // force full repaint after reopen
-    }
+    } // end for(;;) main loop
 
-    // unreachable, but clean up anyway
-    if (nl_fd >= 0) close(nl_fd);
+    // ── graceful shutdown: clear screen & show message ───────
+    printf("ssd1306_status: shutting down...\n");
+    ioctl(fd, SSD1306_IOC_CLEAR);
+    const char *shutdown_msg = "    正在关机…\n\n\n";
+    (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
     close(fd);
+
+    if (nl_fd >= 0) close(nl_fd);
+    return 0;
 }

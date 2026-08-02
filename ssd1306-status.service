@@ -2,12 +2,15 @@
 Description=SSD1306 OLED System Status Display
 After=network.target network-online.target multi-user.target
 Wants=network-online.target
+Before=shutdown.target
+Conflicts=shutdown.target
 
 [Service]
 Type=simple
 ExecStart=/home/kaxia/code/watching/ssd1306_status
 Restart=always
 RestartSec=10
+TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ssd1306-status
