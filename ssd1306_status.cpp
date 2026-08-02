@@ -396,21 +396,12 @@ int main() {
         first = true;   // force full repaint after reopen
     } // end for(;;) main loop
 
-    // ── graceful shutdown: clear screen & show message ───────
-    // Use the same proven pattern as the full-paint path:
-    //   ioctl CLEAR (resets cursor to 0,0) then write 4 \n-separated
-    //   lines each ≤16 cols.  close() is safe since Restart=on-failure
-    //   and exit 0 means systemd won't restart and blank the display.
+    // ── graceful shutdown ───────
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
     ioctl(fd, SSD1306_IOC_CLEAR);
-    //         "    正在关机…  "  = 4 spaces + 正在(4) + 关机(4) + …(2) + 2 spaces = 16 cols
-    const char *shutdown_msg =
-        "    正在关机…  \n"
-        "                \n"
-        "                \n"
-        "                ";
-    (void)!write(fd, shutdown_msg, strlen(shutdown_msg));
+    const char *msg = "    正在关机…  ";
+    (void)!write(fd, msg, strlen(msg));
     close(fd);
     if (nl_fd >= 0) close(nl_fd);
     return 0;
