@@ -6,7 +6,7 @@
  *   Line 1: network type + WiFi SSID
  *   Line 2: CPU % + memory %
  *   Line 3: WebDAV service
- *   Line 4: MP3 fetcher service
+ *   Line 4: CPU temperature
  *
  * Incremental refresh: only rewrites lines that actually changed.
  * Uses ANSI arrow-key escapes (ESC [ A / B / C / D) to navigate
@@ -106,6 +106,11 @@ static bool svc_active(const char *name) {
     snprintf(cmd, sizeof(cmd), "systemctl is-active --quiet %s 2>/dev/null", name);
     return system(cmd) == 0;
 }
+static double cpu_temp() {
+    auto s = read_sysfs("/sys/class/thermal/thermal_zone0/temp");
+    if (s.empty()) return 0.0;
+    return std::stod(s) / 1000.0;  // millidegrees → degrees Celsius
+}
 
 // ── data gatherers ─────────────────────────────────────────────────
 struct NetInfo { enum { WIFI, WIRED, DOWN } type; std::string ssid; };
@@ -157,7 +162,7 @@ static double mem_pct() {
 // ── build 4 display lines ─────────────────────────────────────────
 static void build_lines(std::string l[4],
                         const NetInfo &net, double cpu, double mem,
-                        bool webdav, bool mp3) {
+                        bool webdav, double temp) {
     // line 0 – network
     switch (net.type) {
     case NetInfo::WIFI:
@@ -181,9 +186,10 @@ static void build_lines(std::string l[4],
     l[2] = "webdav  ";
     l[2] += webdav ? " OK" : "DOWN";
 
-    // line 3 – mp3fetcher
-    l[3] = "mp3fetch ";
-    l[3] += mp3 ? " OK" : "DOWN";
+    // line 3 – CPU temperature
+    char b3[32];
+    snprintf(b3, sizeof(b3), "CPU Temp %4.1fC", temp);
+    l[3] = b3;
 }
 
 // ── netlink socket for network-change detection ────────────────────
@@ -308,13 +314,13 @@ int main() {
         NetInfo net = get_net();
         double  mem = mem_pct();
         bool    wd  = svc_active("webdav-server.service");
-        bool    mp3 = svc_active("mp3fetcher.service");
+        double  temp = cpu_temp();
 
         auto cpu_now = cpu_snap();
         double cp = cpu_pct(prev_cpu, cpu_now);
         prev_cpu = cpu_now;
 
-        build_lines(cur, net, cp, mem, wd, mp3);
+        build_lines(cur, net, cp, mem, wd, temp);
 
         if (first) {
             // full paint
