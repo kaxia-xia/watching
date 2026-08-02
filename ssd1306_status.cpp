@@ -400,7 +400,7 @@ int main() {
     printf("ssd1306_status: shutting down...\n");
     fflush(stdout);
     ioctl(fd, SSD1306_IOC_CLEAR);
-    const char *msg = "    正在关机…  ";
+    const char *msg = "    正在关机    ";
     (void)!write(fd, msg, strlen(msg));
     close(fd);
     if (nl_fd >= 0) close(nl_fd);
