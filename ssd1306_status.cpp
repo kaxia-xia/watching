@@ -12,12 +12,21 @@
  * Uses ANSI arrow-key escapes (ESC [ A / B / C / D) to navigate
  * within the terminal, and \r to return to column 0.
  *
+ * Network-change detection: listens on a netlink socket for
+ * RTMGRP_LINK & RTMGRP_IPV4_IFADDR events.  When the network
+ * state changes the whole screen is repainted immediately.
+ *
  * Build: g++ -std=c++20 -O2 -Wall -Wextra -o ssd1306_status ssd1306_status.cpp
  */
 
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
+
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include <cerrno>
 #include <cstdio>
@@ -172,6 +181,52 @@ static void build_lines(std::string l[4],
     l[3] += mp3 ? " OK" : "DOWN";
 }
 
+// ── netlink socket for network-change detection ────────────────────
+// Returns a non-blocking netlink socket subscribed to link & IPv4
+// address change multicasts.  Returns -1 on failure (caller falls
+// back to pure timer-driven refresh).
+static int netlink_open() {
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0) {
+        perror("ssd1306_status: netlink socket");
+        return -1;
+    }
+
+    struct sockaddr_nl addr{};
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR;
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("ssd1306_status: netlink bind");
+        close(fd);
+        return -1;
+    }
+
+    // Make non-blocking so poll() works predictably
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    return fd;
+}
+
+// Drain all pending netlink messages.  Returns true if at least one
+// message was read (meaning a network event happened).
+static bool netlink_drain(int nl_fd) {
+    char buf[4096];
+    bool got_event = false;
+    for (;;) {
+        ssize_t n = recv(nl_fd, buf, sizeof(buf), 0);
+        if (n > 0) {
+            got_event = true;
+            continue;               // drain the whole queue
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        if (n == 0) break;
+        break;                      // real error → bail
+    }
+    return got_event;
+}
+
 // ── main ───────────────────────────────────────────────────────────
 int main() {
     printf("ssd1306_status: starting\n");
@@ -183,13 +238,54 @@ int main() {
         return 1;
     }
 
+    // Try to open netlink for network-change notifications.
+    // If it fails we fall back to pure polling — still works fine.
+    int nl_fd = netlink_open();
+    if (nl_fd >= 0)
+        printf("ssd1306_status: netlink listener active\n");
+    else
+        printf("ssd1306_status: netlink unavailable, polling only\n");
+
     auto prev_cpu = cpu_snap();
     std::string old[ROWS];          // previous frame contents
     std::string cur[ROWS];          // new frame contents
     bool     first = true;
     int      cursor_row = 0;        // where we think the hw cursor is
 
+    struct pollfd pfds[2];
+    int nfds = 0;
+
+    // pfd[0] = netlink (optional)
+    if (nl_fd >= 0) {
+        pfds[nfds].fd     = nl_fd;
+        pfds[nfds].events = POLLIN;
+        nfds++;
+    }
+    // timer-only fallback: poll with no fds but a timeout
+    // (poll supports nfds==0, it just sleeps for the timeout).
+
     for (;;) {
+        // ── poll: wait for netlink event or timeout ────────────
+        int ret = poll(pfds, nfds, REFRESH_S * 1000);
+        if (ret < 0) {
+            if (errno == EINTR) continue;  // signal, just loop
+            perror("ssd1306_status: poll");
+            sleep(REFRESH_S);
+        }
+
+        // Check if netlink has data → network state changed
+        bool net_changed = false;
+        if (nl_fd >= 0 && (pfds[0].revents & POLLIN)) {
+            net_changed = netlink_drain(nl_fd);
+        }
+
+        // If network changed, force a full-screen repaint
+        if (net_changed) {
+            first = true;
+            printf("ssd1306_status: network change detected, refresh\n");
+        }
+
+        // ── gather data ────────────────────────────────────────
         NetInfo net = get_net();
         double  mem = mem_pct();
         bool    wd  = svc_active("webdav-server.service");
@@ -231,7 +327,6 @@ int main() {
             }
         }
 
-        sleep(REFRESH_S);
         continue;
 
     reopen:
@@ -247,4 +342,8 @@ int main() {
         prev_cpu = cpu_snap();
         first = true;   // force full repaint after reopen
     }
+
+    // unreachable, but clean up anyway
+    if (nl_fd >= 0) close(nl_fd);
+    close(fd);
 }
